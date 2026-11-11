@@ -13,10 +13,56 @@ const std::string SHM_NAME = "/contor_memorie_partajata";
 const std::string SEM_NAME = "/semafor_contor";
 const int MAX_COUNT = 1000;
 
+enum class HowManyTimes
+{
+    ONCE,
+    MORE_THAN_ONCE
+};
+
+class Semaphore
+{
+public:
+    Semaphore(sem_t* semaphore) :
+        open{true},
+        _semaphore{semaphore}
+    {}
+
+    void Wait()
+    {
+        sem_wait(_semaphore);
+        open = false;
+    }
+
+    void Open(HowManyTimes openAmount)
+    {
+        if(openAmount == HowManyTimes::ONCE)
+        {
+            if(open)
+            {
+                return;
+            }
+            else 
+            {
+                open = true;
+                sem_post(_semaphore);
+            }
+        }
+        else
+        {
+            open = true;
+            sem_post(_semaphore);
+        }
+    }
+
+private:
+    bool open;
+    sem_t* _semaphore;
+};
+
 class process
 {
 public:
-    process(int processId, int* data, sem_t* semaphore):
+    process(int processId, int* data, Semaphore* semaphore):
         _processId{processId},
         _data{data},
         _semaphore{semaphore}
@@ -27,10 +73,10 @@ public:
         srand(time(NULL) ^ (getpid() << 16)); 
 
         while (true) {
-            sem_wait(_semaphore);
+            _semaphore->Wait();
 
             if (*_data >= MAX_COUNT) {
-                sem_post(_semaphore);
+                _semaphore->Open(HowManyTimes::ONCE);
                 break;
             }
 
@@ -42,7 +88,7 @@ public:
                 moneda = rand() % 2;
             }
 
-            sem_post(_semaphore);
+            _semaphore->Open(HowManyTimes::ONCE);
             usleep(1000); 
         }
     }
@@ -50,20 +96,20 @@ public:
 protected:
     int _processId;
     int* _data;
-    sem_t* _semaphore;
+    Semaphore* _semaphore;
 };
 
 class mainProcess : public process
 {
 public:
-    mainProcess(int* data, sem_t* semaphore) 
+    mainProcess(int* data, Semaphore* semaphore) 
         : process(1, data, semaphore) {}
 };
 
 class secondProcess : public process
 {
 public:
-    secondProcess(int* data, sem_t* semaphore) 
+    secondProcess(int* data, Semaphore* semaphore) 
         : process(2, data, semaphore) {}
 };
 
@@ -76,15 +122,18 @@ int main() {
     *contor_partajat = 0;
 
     sem_t* semafor = sem_open(SEM_NAME.c_str(), O_CREAT, 0666, 1);
+    
+    Semaphore semaforWrapper(semafor);
+
     pid_t pid = fork();
     if (pid == 0) {
-        secondProcess p2(contor_partajat, semafor);
+        secondProcess p2(contor_partajat, &semaforWrapper);
         p2.run();
-            
+
         exit(0);
     } 
     else {
-        mainProcess p1(contor_partajat, semafor);
+        mainProcess p1(contor_partajat, &semaforWrapper);
         p1.run();
         
         wait(NULL);
